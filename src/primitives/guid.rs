@@ -1,44 +1,13 @@
 use std::{
     fmt::{Display, LowerHex},
     mem::{align_of, size_of},
-    ops::Add,
+    ops::{Add, AddAssign, Sub, SubAssign},
     usize,
 };
 
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64 as arch;
+use crate::primitives::{add::add_carry, sub::sub_carry};
 
-#[cfg(target_arch = "x86")]
-use core::arch::x86 as arch;
-
-#[cfg(not(target_pointer_width = "64"))]
-type WordSize = u32;
-#[cfg(target_pointer_width = "64")]
-type t_word = u64;
-
-const WORD_COUNT: usize = (160 / t_word::BITS + 1) as usize;
-
-#[cfg(target_arch = "x86")]
-#[cfg(not(target_pointer_width = "64"))]
-#[inline]
-fn add_carry(c_in: u8, a: u32, b: u32, out: &mut u32) -> u8 {
-    unsafe { arch::_addcarry_u32(c_in, a, b, out) }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[cfg(target_pointer_width = "64")]
-#[inline]
-fn add_carry(c_in: u8, a: u64, b: u64, out: &mut u64) -> u8 {
-    unsafe { arch::_addcarry_u64(c_in, a, b, out) }
-}
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn add_carry(c_in: u8, a: u64, b: u64, out: &mut u64) -> u8 {
-    let (a, b) = a.overflowing_add(b);
-    let (c, d) = a.overflowing_add(c_in as t_word);
-    *out = c;
-    u8::from(b || d)
-}
+use super::{t_word, WORD_COUNT};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct GUID {
@@ -70,6 +39,7 @@ impl GUID {
         }
         #[cfg(not(target_pointer_width = "64"))]
         {
+            carry = add_carry(carry, bytes_a[5], bytes_b[5], &mut bytes_c[5]);
             carry = add_carry(carry, bytes_a[4], bytes_b[4], &mut bytes_c[4]);
             carry = add_carry(carry, bytes_a[3], bytes_b[3], &mut bytes_c[3]);
             carry = add_carry(carry, bytes_a[2], bytes_b[2], &mut bytes_c[2]);
@@ -79,6 +49,37 @@ impl GUID {
 
         if carry > 0 {
             GUID::MAX
+        } else {
+            result
+        }
+    }
+
+    fn saturating_sub(&self, rhs: &Self) -> Self {
+        let mut result = GUID::default();
+        let mut carry = 0;
+
+        let bytes_a = self.bytes;
+        let bytes_b = rhs.bytes;
+        let bytes_c = &mut result.bytes;
+
+        #[cfg(target_pointer_width = "64")]
+        {
+            carry = sub_carry(carry, bytes_a[2], bytes_b[2], &mut bytes_c[2]);
+            carry = sub_carry(carry, bytes_a[1], bytes_b[1], &mut bytes_c[1]);
+            carry = sub_carry(carry, bytes_a[0], bytes_b[0], &mut bytes_c[0]);
+        }
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            carry = sub_carry(carry, bytes_a[5], bytes_b[5], &mut bytes_c[5]);
+            carry = sub_carry(carry, bytes_a[4], bytes_b[4], &mut bytes_c[4]);
+            carry = sub_carry(carry, bytes_a[3], bytes_b[3], &mut bytes_c[3]);
+            carry = sub_carry(carry, bytes_a[2], bytes_b[2], &mut bytes_c[2]);
+            carry = sub_carry(carry, bytes_a[1], bytes_b[1], &mut bytes_c[1]);
+            carry = sub_carry(carry, bytes_a[0], bytes_b[0], &mut bytes_c[0]);
+        }
+
+        if carry > 0 {
+            GUID::MIN
         } else {
             result
         }
@@ -120,6 +121,34 @@ impl GUID {
         }
 
         guid
+    }
+}
+
+impl Add for GUID {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        self.saturating_add(&rhs)
+    }
+}
+
+impl AddAssign for GUID {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = self.saturating_add(&rhs);
+    }
+}
+
+impl Sub for GUID {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.saturating_sub(&rhs)
+    }
+}
+
+impl SubAssign for GUID {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = self.saturating_sub(&rhs);
     }
 }
 
@@ -189,6 +218,24 @@ pub mod test {
         let guid_c = guid_a.saturating_add(&guid_b);
 
         assert_eq!(guid_c, GUID::MAX);
+    }
+
+    #[test]
+    fn saturating_sub() {
+        let guid_a = GUID::from(u128::MAX) + GUID::from(u128::MAX);
+        let guid_b = GUID::from(u128::MAX / 2);
+        let guid_c = guid_a.saturating_sub(&guid_b);
+
+        assert_eq!(format!("{guid_c:x}"), "17fffffffffffffffffffffffffffffff");
+    }
+
+    #[test]
+    fn saturating_sub_saturate() {
+        let guid_a = GUID::MIN;
+        let guid_b = GUID::from(1u32);
+        let guid_c = guid_a.saturating_sub(&guid_b);
+
+        assert_eq!(format!("{guid_c:x}"), "0");
     }
 
     #[test]
