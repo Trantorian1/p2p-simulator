@@ -54,8 +54,34 @@ impl GUID {
         bytes: [t_word::MAX; WORD_COUNT],
     };
 
-    fn saturating_add(self, rhs: Self) -> Self {
-        todo!()
+    fn saturating_add(&self, rhs: &Self) -> Self {
+        let mut result = GUID::default();
+        let mut carry = 0;
+
+        let bytes_a = self.bytes;
+        let bytes_b = rhs.bytes;
+        let bytes_c = &mut result.bytes;
+
+        #[cfg(target_pointer_width = "64")]
+        {
+            carry = add_carry(carry, bytes_a[2], bytes_b[2], &mut bytes_c[2]);
+            carry = add_carry(carry, bytes_a[1], bytes_b[1], &mut bytes_c[1]);
+            carry = add_carry(carry, bytes_a[0], bytes_b[0], &mut bytes_c[0]);
+        }
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            carry = add_carry(carry, bytes_a[4], bytes_b[4], &mut bytes_c[4]);
+            carry = add_carry(carry, bytes_a[3], bytes_b[3], &mut bytes_c[3]);
+            carry = add_carry(carry, bytes_a[2], bytes_b[2], &mut bytes_c[2]);
+            carry = add_carry(carry, bytes_a[1], bytes_b[1], &mut bytes_c[1]);
+            carry = add_carry(carry, bytes_a[0], bytes_b[0], &mut bytes_c[0]);
+        }
+
+        if carry > 0 {
+            GUID::MAX
+        } else {
+            result
+        }
     }
 
     fn from_bytes_be(bytes: &[u8]) -> Self {
@@ -66,8 +92,11 @@ impl GUID {
         let mut guid = GUID::MIN;
         let mut offset = 0;
 
-        for (j, byte) in bytes.iter().rev().enumerate() {
-            guid.bytes[j / word_size] |= (*byte as t_word) << offset;
+        for (i, byte) in bytes.iter().rev().enumerate() {
+            let j = WORD_COUNT - 1 - i / word_size;
+            let byte_offset = (*byte as t_word) << offset;
+
+            guid.bytes[j] |= byte_offset;
             offset = (offset + 8) % t_word::BITS;
         }
 
@@ -82,8 +111,11 @@ impl GUID {
         let mut guid = GUID::MIN;
         let mut offset = 0;
 
-        for (j, byte) in bytes.iter().enumerate() {
-            guid.bytes[j / word_size] |= (*byte as t_word) << offset;
+        for (i, byte) in bytes.iter().enumerate() {
+            let j = WORD_COUNT - 1 - i / word_size;
+            let byte_offset = (*byte as t_word) << offset;
+
+            guid.bytes[j] |= byte_offset;
             offset = (offset + 8) % t_word::BITS;
         }
 
@@ -95,7 +127,7 @@ impl LowerHex for GUID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut hex = String::with_capacity(WORD_COUNT * size_of::<t_word>());
 
-        for byte in self.bytes.iter().filter(|b| **b > 0) {
+        for byte in self.bytes.iter().skip_while(|b| **b == 0) {
             hex.push_str(&format!("{byte:x}"));
         }
 
@@ -142,6 +174,24 @@ pub mod test {
     use super::GUID;
 
     #[test]
+    fn saturating_add() {
+        let guid_a = GUID::from(u128::MAX);
+        let guid_b = GUID::from(u128::MAX);
+        let guid_c = guid_a.saturating_add(&guid_b);
+
+        assert_eq!(format!("{guid_c:x}"), "1fffffffffffffffffffffffffffffffe");
+    }
+
+    #[test]
+    fn saturating_add_saturate() {
+        let guid_a = GUID::MAX;
+        let guid_b = GUID::from(1u32);
+        let guid_c = guid_a.saturating_add(&guid_b);
+
+        assert_eq!(guid_c, GUID::MAX);
+    }
+
+    #[test]
     fn from_bytes() {
         let guid_be = GUID::from_bytes_be(&42u32.to_be_bytes());
         let guid_le = GUID::from_bytes_le(&42u32.to_le_bytes());
@@ -184,6 +234,7 @@ pub mod test {
     #[test]
     fn from_u128() {
         let guid = GUID::from(u128::MAX);
+        println!("bytes: {:?}", guid.bytes);
         assert_eq!(format!("{guid:x}"), format!("{:x}", u128::MAX));
     }
 }
