@@ -1,13 +1,8 @@
-use std::{
-    fmt::{Display, LowerHex},
-    mem::{align_of, size_of},
-    ops::{Add, AddAssign, Sub, SubAssign},
-    usize,
-};
+use std::mem::size_of;
 
 use crate::primitives::{add::add_carry, sub::sub_carry};
 
-use super::{t_word, WORD_COUNT};
+use super::{t_word, GuidError, WORD_COUNT};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct GUID {
@@ -122,9 +117,67 @@ impl GUID {
 
         guid
     }
+
+    fn from_hex_str(hex: &str) -> Result<Self, GuidError> {
+        ///////////////////////////////////////////////////////////////////////
+        //////////////////////////// START: HELPERS ///////////////////////////
+        ///////////////////////////////////////////////////////////////////////
+        fn conv(c: char) -> u8 {
+            if c.is_ascii_digit() {
+                c as u8 - '0' as u8
+            } else {
+                c as u8 - 'a' as u8 + 10
+            }
+        }
+
+        fn check(c: char) -> Result<(), GuidError> {
+            if !c.is_ascii_hexdigit() {
+                return Err(GuidError::HexFormatInvalid);
+            } else {
+                Ok(())
+            }
+        }
+        ///////////////////////////////////////////////////////////////////////
+        ///////////////////////////// END: HELPERS ////////////////////////////
+        ///////////////////////////////////////////////////////////////////////
+
+        if hex.is_empty() {
+            return Err(GuidError::HexFormatEmpty);
+        }
+
+        let n = hex.find("0x").map(|n| n + 2).unwrap_or_default();
+        let hex = &hex.to_lowercase()[n..];
+        let n = hex.find(|c| c != '0').map(|n| n).unwrap_or_default();
+
+        let len = hex.len() - n;
+        let mut iter = hex.chars().skip(n);
+        let mut bytes = vec![0; len / 2 + len % 2];
+        let mut i = 0;
+
+        if len % 2 != 0 {
+            if let Some(c_a) = iter.next() {
+                check(c_a)?;
+
+                bytes[i] = conv(c_a);
+                i = 1;
+            }
+        }
+
+        while let Some(c_a) = iter.next() {
+            if let Some(c_b) = iter.next() {
+                check(c_a)?;
+                check(c_b)?;
+
+                bytes[i] = conv(c_a) << 4 | conv(c_b);
+                i += 1;
+            }
+        }
+
+        Ok(Self::from_bytes_be(&bytes))
+    }
 }
 
-impl Add for GUID {
+impl std::ops::Add for GUID {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -132,13 +185,13 @@ impl Add for GUID {
     }
 }
 
-impl AddAssign for GUID {
+impl std::ops::AddAssign for GUID {
     fn add_assign(&mut self, rhs: Self) {
         *self = self.saturating_add(&rhs);
     }
 }
 
-impl Sub for GUID {
+impl std::ops::Sub for GUID {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -146,13 +199,13 @@ impl Sub for GUID {
     }
 }
 
-impl SubAssign for GUID {
+impl std::ops::SubAssign for GUID {
     fn sub_assign(&mut self, rhs: Self) {
         *self = self.saturating_sub(&rhs);
     }
 }
 
-impl LowerHex for GUID {
+impl std::fmt::LowerHex for GUID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut hex = String::with_capacity(WORD_COUNT * size_of::<t_word>());
 
@@ -200,6 +253,8 @@ impl From<u128> for GUID {
 
 #[cfg(test)]
 pub mod test {
+    use crate::primitives::GuidError;
+
     use super::GUID;
 
     #[test]
@@ -236,6 +291,75 @@ pub mod test {
         let guid_c = guid_a.saturating_sub(&guid_b);
 
         assert_eq!(format!("{guid_c:x}"), "0");
+    }
+
+    #[test]
+    fn from_hex_str() {
+        assert_eq!(Ok(GUID::from(0u32)), GUID::from_hex_str("0"));
+        assert_eq!(Ok(GUID::from(1u32)), GUID::from_hex_str("1"));
+        assert_eq!(Ok(GUID::from(2u32)), GUID::from_hex_str("2"));
+        assert_eq!(Ok(GUID::from(3u32)), GUID::from_hex_str("3"));
+        assert_eq!(Ok(GUID::from(4u32)), GUID::from_hex_str("4"));
+        assert_eq!(Ok(GUID::from(5u32)), GUID::from_hex_str("5"));
+        assert_eq!(Ok(GUID::from(6u32)), GUID::from_hex_str("6"));
+        assert_eq!(Ok(GUID::from(7u32)), GUID::from_hex_str("7"));
+        assert_eq!(Ok(GUID::from(8u32)), GUID::from_hex_str("8"));
+        assert_eq!(Ok(GUID::from(9u32)), GUID::from_hex_str("9"));
+        assert_eq!(Ok(GUID::from(10u32)), GUID::from_hex_str("a"));
+        assert_eq!(Ok(GUID::from(11u32)), GUID::from_hex_str("b"));
+        assert_eq!(Ok(GUID::from(12u32)), GUID::from_hex_str("c"));
+        assert_eq!(Ok(GUID::from(13u32)), GUID::from_hex_str("d"));
+        assert_eq!(Ok(GUID::from(14u32)), GUID::from_hex_str("e"));
+        assert_eq!(Ok(GUID::from(15u32)), GUID::from_hex_str("f"));
+    }
+
+    #[test]
+    fn from_hex_str_0x() {
+        assert_eq!(Ok(GUID::from(0u32)), GUID::from_hex_str("0x0"));
+        assert_eq!(Ok(GUID::from(1u32)), GUID::from_hex_str("0x1"));
+        assert_eq!(Ok(GUID::from(2u32)), GUID::from_hex_str("0x2"));
+        assert_eq!(Ok(GUID::from(3u32)), GUID::from_hex_str("0x3"));
+        assert_eq!(Ok(GUID::from(4u32)), GUID::from_hex_str("0x4"));
+        assert_eq!(Ok(GUID::from(5u32)), GUID::from_hex_str("0x5"));
+        assert_eq!(Ok(GUID::from(6u32)), GUID::from_hex_str("0x6"));
+        assert_eq!(Ok(GUID::from(7u32)), GUID::from_hex_str("0x7"));
+        assert_eq!(Ok(GUID::from(8u32)), GUID::from_hex_str("0x8"));
+        assert_eq!(Ok(GUID::from(9u32)), GUID::from_hex_str("0x9"));
+        assert_eq!(Ok(GUID::from(10u32)), GUID::from_hex_str("0xa"));
+        assert_eq!(Ok(GUID::from(11u32)), GUID::from_hex_str("0xb"));
+        assert_eq!(Ok(GUID::from(12u32)), GUID::from_hex_str("0xc"));
+        assert_eq!(Ok(GUID::from(13u32)), GUID::from_hex_str("0xd"));
+        assert_eq!(Ok(GUID::from(14u32)), GUID::from_hex_str("0xe"));
+        assert_eq!(Ok(GUID::from(15u32)), GUID::from_hex_str("0xf"));
+    }
+
+    #[test]
+    fn from_hex_str_upper() {
+        assert_eq!(Ok(GUID::from(10u32)), GUID::from_hex_str("A"));
+        assert_eq!(Ok(GUID::from(11u32)), GUID::from_hex_str("B"));
+        assert_eq!(Ok(GUID::from(12u32)), GUID::from_hex_str("C"));
+        assert_eq!(Ok(GUID::from(13u32)), GUID::from_hex_str("D"));
+        assert_eq!(Ok(GUID::from(14u32)), GUID::from_hex_str("E"));
+        assert_eq!(Ok(GUID::from(15u32)), GUID::from_hex_str("F"));
+    }
+
+    #[test]
+    fn from_hex_str_padded() {
+        assert_eq!(Ok(GUID::from(100u32)), GUID::from_hex_str("00064"));
+    }
+
+    #[test]
+    fn from_hex_invalid() {
+        assert_eq!(GUID::from_hex_str(""), Err(GuidError::HexFormatEmpty));
+        assert_eq!(GUID::from_hex_str("z"), Err(GuidError::HexFormatInvalid));
+    }
+
+    #[test]
+    fn from_hex_long() {
+        let guid_a = GUID::from_hex_str("1fffffffffffffffffffffffffffffffe").unwrap_or_default();
+        let guid_b = GUID::from(u128::MAX) + GUID::from(u128::MAX);
+
+        assert_eq!(format!("{guid_a:x}"), format!("{guid_b:x}"));
     }
 
     #[test]
