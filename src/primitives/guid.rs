@@ -15,7 +15,8 @@ impl GUID {
     };
 
     const MAX: GUID = GUID {
-        bytes: [t_word::MAX; WORD_COUNT],
+        // TODO: do the same for 32 bit
+        bytes: [4294967295, 18446744073709551615, 18446744073709551615],
     };
 
     fn saturating_add(&self, rhs: &Self) -> Self {
@@ -122,6 +123,7 @@ impl GUID {
         ///////////////////////////////////////////////////////////////////////
         //////////////////////////// START: HELPERS ///////////////////////////
         ///////////////////////////////////////////////////////////////////////
+        #[inline(always)]
         fn conv(c: char) -> u8 {
             if c.is_ascii_digit() {
                 c as u8 - '0' as u8
@@ -130,6 +132,7 @@ impl GUID {
             }
         }
 
+        #[inline(always)]
         fn check(c: char) -> Result<(), GuidError> {
             if !c.is_ascii_hexdigit() {
                 return Err(GuidError::HexFormatInvalid);
@@ -205,12 +208,150 @@ impl std::ops::SubAssign for GUID {
     }
 }
 
+impl std::fmt::UpperHex for GUID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut hex = String::new();
+        let mut iter = self.bytes.iter().skip_while(|b| **b == 0);
+
+        if let Some(byte) = iter.next() {
+            hex.push_str(&format!("{byte:X}"));
+        }
+
+        let target: t_word = 1 << (t_word::BITS - 3);
+
+        for byte in iter {
+            if *byte == 0 {
+                hex.push_str(&"0".repeat(size_of::<t_word>() * 2));
+            } else if *byte < target {
+                hex.push_str(&"0".repeat((byte.leading_zeros() / 4) as usize));
+                hex.push_str(&format!("{byte:X}"));
+            } else {
+                hex.push_str(&format!("{byte:X}"));
+            }
+        }
+
+        if hex.is_empty() {
+            hex.push('0')
+        }
+
+        write!(f, "{hex}")
+    }
+}
+
 impl std::fmt::LowerHex for GUID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut hex = String::with_capacity(WORD_COUNT * size_of::<t_word>());
+        ///////////////////////////////////////////////////////////////////////
+        //////////////////////////// START: HELPERS ///////////////////////////
+        ///////////////////////////////////////////////////////////////////////
+        #[inline(always)]
+        fn hex(byte: t_word, target: t_word) -> String {
+            if byte == 0 {
+                let utf8 = vec![b'0'; size_of::<t_word>() * 2];
+                unsafe { String::from_utf8_unchecked(utf8) }
+            } else if byte < target {
+                let utf8 = vec![b'0'; (byte.leading_zeros() / 4) as usize];
+                let padding = unsafe { String::from_utf8_unchecked(utf8) };
+                format!("{padding}{byte:x}")
+            } else {
+                format!("{byte:x}")
+            }
+        }
+        ///////////////////////////////////////////////////////////////////////
+        ///////////////////////////// END: HELPERS ////////////////////////////
+        ///////////////////////////////////////////////////////////////////////
 
-        for byte in self.bytes.iter().skip_while(|b| **b == 0) {
-            hex.push_str(&format!("{byte:x}"));
+        let target: t_word = 1 << (t_word::BITS - 3);
+        let bytes = self.bytes;
+
+        #[cfg(target_pointer_width = "64")]
+        return {
+            if bytes[0] > 0 {
+                write!(
+                    f,
+                    "{:x}{}{}",
+                    bytes[0],
+                    hex(bytes[1], target),
+                    hex(bytes[2], target)
+                )
+            } else if bytes[1] > 0 {
+                write!(f, "{:x}{}", bytes[1], hex(bytes[2], target))
+            } else if bytes[2] > 0 {
+                write!(f, "{:x}", bytes[2])
+            } else {
+                write!(f, "0")
+            }
+        };
+        #[cfg(not(target_pointer_width = "64"))]
+        return {
+            if bytes[0] > 0 {
+                write!(
+                    f,
+                    "{:x}{}{}{}{}{}",
+                    bytes[0],
+                    hex(bytes[1], target),
+                    hex(bytes[2], target),
+                    hex(bytes[3], target),
+                    hex(bytes[4], target),
+                    hex(bytes[5], target)
+                )
+            } else if bytes[1] > 0 {
+                write!(
+                    f,
+                    "{:x}{}{}{}{}",
+                    bytes[1],
+                    hex(bytes[2], target),
+                    hex(bytes[3], target),
+                    hex(bytes[4], target),
+                    hex(bytes[5], target)
+                )
+            } else if bytes[2] > 0 {
+                write!(
+                    f,
+                    "{:x}{}{}{}",
+                    bytes[2],
+                    hex(bytes[3], target),
+                    hex(bytes[4], target),
+                    hex(bytes[5], target)
+                )
+            } else if bytes[3] > 0 {
+                write!(
+                    f,
+                    "{:x}{}{}",
+                    bytes[3],
+                    hex(bytes[4], target),
+                    hex(bytes[5], target)
+                )
+            } else if bytes[4] > 0 {
+                write!(f, "{:x}{}", bytes[4], hex(bytes[5], target))
+            } else if bytes[5] > 0 {
+                write!(f, "{:x}", bytes[5])
+            } else {
+                write!(f, "0")
+            }
+        };
+    }
+}
+
+impl std::fmt::Binary for GUID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut hex = String::new();
+        let mut iter = self.bytes.iter().skip_while(|b| **b == 0);
+
+        if let Some(byte) = iter.next() {
+            hex.push_str(&format!("{byte:b}"));
+        }
+
+        let target: t_word = 1 << (t_word::BITS - 1);
+
+        for byte in iter {
+            if *byte == 0 {
+                hex.push_str(&"0".repeat(t_word::BITS as usize));
+            } else if *byte < target {
+                hex.push_str(&"0".repeat(byte.leading_zeros() as usize));
+                hex.push_str(&format!("{byte:b}"));
+            } else {
+                hex.push_str(&format!("{byte:b}"));
+            }
         }
 
         if hex.is_empty() {
@@ -253,9 +394,85 @@ impl From<u128> for GUID {
 
 #[cfg(test)]
 pub mod test {
+    use std::mem::size_of;
+
     use crate::primitives::GuidError;
 
     use super::GUID;
+
+    #[test]
+    fn display_hex_lower() {
+        println!("{}", size_of::<GUID>());
+
+        let guid_a = GUID::MAX;
+        assert_eq!(
+            format!("{guid_a:x}"),
+            "ffffffffffffffffffffffffffffffffffffffff"
+        );
+
+        let guid_b = GUID::from(1u32);
+        assert_eq!(format!("{guid_b:x}"), "1");
+
+        let guid_c = GUID::from(u128::MAX) + GUID::from(2u32);
+        assert_eq!(format!("{guid_c:x}"), "100000000000000000000000000000001");
+
+        let guid_d = GUID::from_hex_str("110000001000000010000000100000001").unwrap();
+        assert_eq!(format!("{guid_d:x}"), "110000001000000010000000100000001");
+
+        let guid_e = GUID::from_hex_str("10000001100000011000000110000001").unwrap();
+        assert_eq!(format!("{guid_e:x}"), "10000001100000011000000110000001");
+
+        let guid_f = GUID::from(0u32);
+        assert_eq!(format!("{guid_f:x}"), "0");
+    }
+
+    #[test]
+    fn display_hex_upper() {
+        let guid_a = GUID::MAX;
+        assert_eq!(
+            format!("{guid_a:X}"),
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        );
+
+        let guid_b = GUID::from(1u32);
+        assert_eq!(format!("{guid_b:X}"), "1");
+
+        let guid_c = GUID::from(u128::MAX) + GUID::from(2u32);
+        assert_eq!(format!("{guid_c:X}"), "100000000000000000000000000000001");
+
+        let guid_d = GUID::from_hex_str("110000001000000010000000100000001").unwrap();
+        assert_eq!(format!("{guid_d:X}"), "110000001000000010000000100000001");
+
+        let guid_e = GUID::from_hex_str("10000001100000011000000110000001").unwrap();
+        assert_eq!(format!("{guid_e:X}"), "10000001100000011000000110000001");
+
+        let guid_f = GUID::from(0u32);
+        assert_eq!(format!("{guid_f:X}"), "0");
+    }
+
+    #[test]
+    fn display_binary() {
+        let guid_a = GUID::MAX;
+        assert_eq!(
+            format!("{guid_a:b}"),
+            "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"
+        );
+
+        let guid_b = GUID::from(1u32);
+        assert_eq!(format!("{guid_b:b}"), "1");
+
+        let guid_c = GUID::from(u128::MAX) + GUID::from(2u32);
+        assert_eq!(format!("{guid_c:b}"), "100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001");
+
+        let guid_d = GUID::from_hex_str("110000001000000010000000100000001").unwrap();
+        assert_eq!(format!("{guid_d:b}"), "100010000000000000000000000000001000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000001");
+
+        let guid_e = GUID::from_hex_str("10000001100000011000000110000001").unwrap();
+        assert_eq!(format!("{guid_e:b}"), "10000000000000000000000000001000100000000000000000000000000010001000000000000000000000000000100010000000000000000000000000001");
+
+        let guid_f = GUID::from(0u32);
+        assert_eq!(format!("{guid_f:b}"), "0");
+    }
 
     #[test]
     fn saturating_add() {
@@ -386,7 +603,6 @@ pub mod test {
     #[test]
     fn from_u16() {
         let guid = GUID::from(u16::MAX);
-        println!("{:?}", guid.bytes);
         assert_eq!(format!("{guid:x}"), format!("{:x}", u16::MAX));
     }
 
@@ -405,7 +621,6 @@ pub mod test {
     #[test]
     fn from_u128() {
         let guid = GUID::from(u128::MAX);
-        println!("bytes: {:?}", guid.bytes);
         assert_eq!(format!("{guid:x}"), format!("{:x}", u128::MAX));
     }
 }
